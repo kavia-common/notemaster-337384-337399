@@ -1,9 +1,46 @@
 import importlib
 from pathlib import Path
-from typing import Generator
+from typing import Any, Callable, Generator, Optional
 
+import anyio
 import httpx
 import pytest
+
+
+class SyncHttpxClient:
+    """
+    Synchronous wrapper around httpx.AsyncClient.
+
+    httpx>=0.28 made ASGITransport async-only, which means using httpx.Client
+    (sync client) with ASGITransport fails because the transport does not
+    implement the sync context manager protocol (__enter__/__exit__).
+
+    This wrapper lets the existing (sync) tests keep calling client.get/post/patch/delete
+    while executing the underlying requests via anyio.run().
+
+    Note: This is intentionally minimal, exposing only what the current tests use.
+    """
+
+    def __init__(self, async_client: httpx.AsyncClient):
+        self._async_client = async_client
+
+    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        return anyio.run(self._async_client.request, method, url, **kwargs)
+
+    def get(self, url: str, **kwargs: Any) -> httpx.Response:
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url: str, **kwargs: Any) -> httpx.Response:
+        return self.request("POST", url, **kwargs)
+
+    def patch(self, url: str, **kwargs: Any) -> httpx.Response:
+        return self.request("PATCH", url, **kwargs)
+
+    def delete(self, url: str, **kwargs: Any) -> httpx.Response:
+        return self.request("DELETE", url, **kwargs)
+
+    def close(self) -> None:
+        anyio.run(self._async_client.aclose)
 
 
 @pytest.fixture()
@@ -35,10 +72,19 @@ def app(monkeypatch: pytest.MonkeyPatch, sqlite_db_path: str):
 
 
 @pytest.fixture()
-def client(app) -> Generator[httpx.Client, None, None]:
+def client(app) -> Generator[SyncHttpxClient, None, None]:
     """
     httpx client that calls the FastAPI app in-process via ASGITransport.
+
+    Uses AsyncClient because ASGITransport is async-only in httpx==0.28.x, but
+    exposes a sync API to tests via SyncHttpxClient.
     """
     transport = httpx.ASGITransport(app=app)
-    with httpx.Client(transport=transport, base_url="http://testserver") as c:
-        yield c
+
+    async_client = httpx.AsyncClient(transport=transport, base_url="http://testserver")
+    sync_client = SyncHttpxClient(async_client)
+
+    try:
+        yield sync_client
+    finally:
+        sync_client.close()
