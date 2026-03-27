@@ -210,17 +210,20 @@ class NotesFlow:
         self,
         q: Optional[str] = None,
         tag: Optional[str] = None,
+        tags: Optional[List[str]] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> NoteListOut:
         """
-        List notes with optional search and tag filter.
+        List notes with optional search and tag filter(s).
 
         Search behavior:
           - matches title/content with LIKE (case-insensitive via lower()).
 
         Tag behavior:
-          - filters notes that have the provided tag name (case-insensitive).
+          - `tag`: legacy single-tag filter.
+          - `tags`: multi-select filter with AND semantics (note must include ALL tags).
+            Normalization: lowercased/trimmed/unique.
 
         Pagination:
           - limit/max 100 enforced at API layer; offset >= 0.
@@ -228,16 +231,37 @@ class NotesFlow:
         q = (q or "").strip()
         tag = (tag or "").strip().lower() or None
 
-        logger.info("NotesFlow.list_notes start q=%s tag=%s limit=%s offset=%s", bool(q), tag, limit, offset)
+        norm_tags = _normalize_tags(tags or [])
+        if norm_tags:
+            # If multi-tags provided, ignore legacy single tag to keep one canonical behavior.
+            tag = None
+
+        logger.info(
+            "NotesFlow.list_notes start q=%s tag=%s tags=%s limit=%s offset=%s",
+            bool(q),
+            tag,
+            len(norm_tags),
+            limit,
+            offset,
+        )
 
         where: List[str] = []
         params: List[object] = []
 
+        # We build JOIN/WHERE differently depending on single vs multi tags.
         join = ""
+        having = ""
         if tag:
             join = "JOIN note_tags nt ON nt.note_id = n.id JOIN tags t ON t.id = nt.tag_id"
             where.append("t.name = ?")
             params.append(tag)
+        elif norm_tags:
+            join = "JOIN note_tags nt ON nt.note_id = n.id JOIN tags t ON t.id = nt.tag_id"
+            placeholders = ", ".join(["?"] * len(norm_tags))
+            where.append(f"t.name IN ({placeholders})")
+            params.extend(norm_tags)
+            # AND semantics: note must match all selected tags.
+            having = f"HAVING COUNT(DISTINCT t.name) = {len(norm_tags)}"
 
         if q:
             where.append("(lower(n.title) LIKE ? OR lower(n.content) LIKE ?)")
@@ -247,30 +271,66 @@ class NotesFlow:
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
         with sqlite_connection(self.db) as conn:
-            cur_total = execute(
-                conn,
-                f"""
-                SELECT COUNT(DISTINCT n.id) AS c
-                FROM notes n
-                {join}
-                {where_sql}
-                """,
-                tuple(params),
-            )
-            total = int(cur_total.fetchone()["c"])
+            # Total count (distinct notes)
+            if norm_tags:
+                cur_total = execute(
+                    conn,
+                    f"""
+                    SELECT COUNT(*) AS c FROM (
+                        SELECT n.id
+                        FROM notes n
+                        {join}
+                        {where_sql}
+                        GROUP BY n.id
+                        {having}
+                    ) sub
+                    """,
+                    tuple(params),
+                )
+                total = int(cur_total.fetchone()["c"])
+            else:
+                cur_total = execute(
+                    conn,
+                    f"""
+                    SELECT COUNT(DISTINCT n.id) AS c
+                    FROM notes n
+                    {join}
+                    {where_sql}
+                    """,
+                    tuple(params),
+                )
+                total = int(cur_total.fetchone()["c"])
 
-            cur = execute(
-                conn,
-                f"""
-                SELECT DISTINCT n.*
-                FROM notes n
-                {join}
-                {where_sql}
-                ORDER BY n.pinned DESC, n.updated_at DESC
-                LIMIT ? OFFSET ?
-                """,
-                tuple(params + [limit, offset]),
-            )
+            # Items query
+            if norm_tags:
+                cur = execute(
+                    conn,
+                    f"""
+                    SELECT n.*
+                    FROM notes n
+                    {join}
+                    {where_sql}
+                    GROUP BY n.id
+                    {having}
+                    ORDER BY n.pinned DESC, n.updated_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(params + [limit, offset]),
+                )
+            else:
+                cur = execute(
+                    conn,
+                    f"""
+                    SELECT DISTINCT n.*
+                    FROM notes n
+                    {join}
+                    {where_sql}
+                    ORDER BY n.pinned DESC, n.updated_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(params + [limit, offset]),
+                )
+
             rows = cur.fetchall()
             items = [self._row_to_note_out(conn, r) for r in rows]
 

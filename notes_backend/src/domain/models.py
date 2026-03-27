@@ -43,3 +43,22 @@ class NoteOut(BaseModel):
 class NoteListOut(BaseModel):
     items: List[NoteOut] = Field(..., description="Notes list items.")
     total: int = Field(..., description="Total items matching query.")
+
+
+class TagCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=50, description="Tag name (will be normalized).")
+
+
+class TagUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=50, description="New tag name (normalized).")
+
+
+class TagOut(BaseModel):
+    id: int = Field(..., description="Tag ID.")
+    name: str = Field(..., description="Tag name.")
+    created_at: datetime = Field(..., description="Creation time (UTC).")
+
+
+class TagListOut(BaseModel):
+    items: List[TagOut] = Field(..., description="Tags list items.")
+    total: int = Field(..., description="Total tags.")
