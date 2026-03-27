@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import sqlite3
 
@@ -214,6 +214,111 @@ class NotesFlow:
             if cur.rowcount == 0:
                 raise NoteNotFoundError(f"Note {note_id} not found")
         logger.info("NotesFlow.delete_note end id=%s", note_id)
+
+    # PUBLIC_INTERFACE
+    # PUBLIC_INTERFACE
+    def bulk_delete_notes(self, note_ids: List[int]) -> Dict[str, List[int]]:
+        """
+        Delete many notes by IDs.
+
+        Contract:
+          - Input: list of note IDs
+          - Output: dict {deleted_ids: [...], not_found_ids: [...]}
+          - Side effects: deletes rows from notes table; cascades note_tags by FK
+        """
+        ids = [int(x) for x in (note_ids or []) if x is not None]
+        if not ids:
+            return {"deleted_ids": [], "not_found_ids": []}
+
+        with sqlite_connection(self.db) as conn:
+            # Find existing first to return not_found.
+            placeholders = ", ".join(["?"] * len(ids))
+            cur = execute(conn, f"SELECT id FROM notes WHERE id IN ({placeholders})", tuple(ids))
+            existing = {int(r["id"]) for r in cur.fetchall()}
+            not_found = sorted([i for i in ids if i not in existing])
+
+            if existing:
+                placeholders2 = ", ".join(["?"] * len(existing))
+                execute(conn, f"DELETE FROM notes WHERE id IN ({placeholders2})", tuple(sorted(existing)))
+
+        return {"deleted_ids": sorted(existing), "not_found_ids": not_found}
+
+    def _add_tags_to_notes(self, conn: sqlite3.Connection, note_ids: List[int], tags: List[str]) -> None:
+        """Internal helper: add tags to notes (no-op for existing associations)."""
+        if not note_ids or not tags:
+            return
+        tag_ids = self._ensure_tags(conn, tags)
+        for note_id in note_ids:
+            for tag_id in tag_ids:
+                execute(conn, "INSERT OR IGNORE INTO note_tags(note_id, tag_id) VALUES (?, ?)", (note_id, tag_id))
+
+    def _remove_tags_from_notes(self, conn: sqlite3.Connection, note_ids: List[int], tags: List[str]) -> None:
+        """Internal helper: remove tags from notes (no-op if association missing)."""
+        if not note_ids or not tags:
+            return
+        placeholders = ", ".join(["?"] * len(tags))
+        cur = execute(conn, f"SELECT id FROM tags WHERE name IN ({placeholders})", tuple(tags))
+        tag_ids = [int(r["id"]) for r in cur.fetchall()]
+        if not tag_ids:
+            return
+
+        note_ph = ", ".join(["?"] * len(note_ids))
+        tag_ph = ", ".join(["?"] * len(tag_ids))
+        execute(
+            conn,
+            f"DELETE FROM note_tags WHERE note_id IN ({note_ph}) AND tag_id IN ({tag_ph})",
+            tuple(note_ids + tag_ids),
+        )
+
+    # PUBLIC_INTERFACE
+    def bulk_add_tags(self, note_ids: List[int], tags: List[str]) -> Dict[str, List[int]]:
+        """
+        Add tags to many notes.
+
+        Contract:
+          - Input: note_ids, tags (names)
+          - Output: dict {updated_ids: [...], not_found_ids: [...]}
+          - Notes: Tags are normalized to match single-note behavior.
+        """
+        ids = [int(x) for x in (note_ids or []) if x is not None]
+        norm_tags = _normalize_tags(tags or [])
+        if not ids or not norm_tags:
+            return {"updated_ids": [], "not_found_ids": []}
+
+        with sqlite_connection(self.db) as conn:
+            placeholders = ", ".join(["?"] * len(ids))
+            cur = execute(conn, f"SELECT id FROM notes WHERE id IN ({placeholders})", tuple(ids))
+            existing = sorted({int(r["id"]) for r in cur.fetchall()})
+            not_found = sorted([i for i in ids if i not in set(existing)])
+
+            self._add_tags_to_notes(conn, existing, norm_tags)
+
+        return {"updated_ids": existing, "not_found_ids": not_found}
+
+    # PUBLIC_INTERFACE
+    def bulk_remove_tags(self, note_ids: List[int], tags: List[str]) -> Dict[str, List[int]]:
+        """
+        Remove tags from many notes.
+
+        Contract:
+          - Input: note_ids, tags (names)
+          - Output: dict {updated_ids: [...], not_found_ids: [...]}
+          - Notes: Tags are normalized; if a tag doesn't exist, it's simply ignored.
+        """
+        ids = [int(x) for x in (note_ids or []) if x is not None]
+        norm_tags = _normalize_tags(tags or [])
+        if not ids or not norm_tags:
+            return {"updated_ids": [], "not_found_ids": []}
+
+        with sqlite_connection(self.db) as conn:
+            placeholders = ", ".join(["?"] * len(ids))
+            cur = execute(conn, f"SELECT id FROM notes WHERE id IN ({placeholders})", tuple(ids))
+            existing = sorted({int(r["id"]) for r in cur.fetchall()})
+            not_found = sorted([i for i in ids if i not in set(existing)])
+
+            self._remove_tags_from_notes(conn, existing, norm_tags)
+
+        return {"updated_ids": existing, "not_found_ids": not_found}
 
     # PUBLIC_INTERFACE
     def list_notes(

@@ -65,3 +65,30 @@ class TagOut(BaseModel):
 class TagListOut(BaseModel):
     items: List[TagOut] = Field(..., description="Tags list items.")
     total: int = Field(..., description="Total tags.")
+
+
+class BulkIdsIn(BaseModel):
+    """Request payload containing a list of note IDs for bulk operations."""
+
+    note_ids: List[int] = Field(..., min_length=1, description="List of note IDs to apply the operation to.")
+
+
+class BulkDeleteOut(BaseModel):
+    """Response payload for bulk delete operations."""
+
+    deleted_ids: List[int] = Field(default_factory=list, description="IDs that were deleted.")
+    not_found_ids: List[int] = Field(default_factory=list, description="IDs that did not exist.")
+
+
+class BulkTagsIn(BaseModel):
+    """Request payload for bulk tag add/remove operations."""
+
+    note_ids: List[int] = Field(..., min_length=1, description="List of note IDs to apply the operation to.")
+    tags: List[str] = Field(..., min_length=1, description="List of tag names to add/remove.")
+
+
+class BulkTagsOut(BaseModel):
+    """Response payload for bulk tag add/remove operations."""
+
+    updated_ids: List[int] = Field(default_factory=list, description="IDs successfully updated.")
+    not_found_ids: List[int] = Field(default_factory=list, description="IDs that did not exist.")

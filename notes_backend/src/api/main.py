@@ -22,6 +22,10 @@ from ..core.config import get_config
 from ..adapters.sqlite_db import SqliteDb
 from ..adapters.schema import ensure_schema
 from ..domain.models import (
+    BulkDeleteOut,
+    BulkIdsIn,
+    BulkTagsIn,
+    BulkTagsOut,
     NoteCreate,
     NoteListOut,
     NoteOut,
@@ -156,6 +160,48 @@ def delete_note(note_id: int):
         return {"deleted": True, "id": note_id}
     except NoteNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@app.post(
+    "/notes/bulk/delete",
+    response_model=BulkDeleteOut,
+    tags=["Notes"],
+    summary="Bulk delete notes",
+    description="Delete multiple notes in one request. Returns which IDs were deleted vs not found.",
+    operation_id="bulk_delete_notes",
+)
+def bulk_delete_notes(payload: BulkIdsIn):
+    """Bulk delete notes by IDs."""
+    result = flow.bulk_delete_notes(payload.note_ids)
+    return BulkDeleteOut(**result)
+
+
+@app.post(
+    "/notes/bulk/tags/add",
+    response_model=BulkTagsOut,
+    tags=["Notes"],
+    summary="Bulk add tags",
+    description="Add one or more tags to multiple notes (idempotent).",
+    operation_id="bulk_add_tags",
+)
+def bulk_add_tags(payload: BulkTagsIn):
+    """Bulk add tags to notes."""
+    result = flow.bulk_add_tags(payload.note_ids, payload.tags)
+    return BulkTagsOut(**result)
+
+
+@app.post(
+    "/notes/bulk/tags/remove",
+    response_model=BulkTagsOut,
+    tags=["Notes"],
+    summary="Bulk remove tags",
+    description="Remove one or more tags from multiple notes (idempotent).",
+    operation_id="bulk_remove_tags",
+)
+def bulk_remove_tags(payload: BulkTagsIn):
+    """Bulk remove tags from notes."""
+    result = flow.bulk_remove_tags(payload.note_ids, payload.tags)
+    return BulkTagsOut(**result)
 
 
 @app.get(
