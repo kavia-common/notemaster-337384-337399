@@ -1,6 +1,6 @@
 import importlib
 from pathlib import Path
-from typing import Any, Callable, Generator, Optional
+from typing import Any, Generator
 
 import anyio
 import httpx
@@ -25,7 +25,20 @@ class SyncHttpxClient:
         self._async_client = async_client
 
     def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        return anyio.run(self._async_client.request, method, url, **kwargs)
+        """
+        Execute an HTTP request synchronously against the underlying AsyncClient.
+
+        Important:
+          - anyio.run() only accepts positional args (and backend options).
+          - Therefore we must not pass request kwargs (e.g. json=..., params=...)
+            into anyio.run(). Instead, capture them in a closure and pass them
+            to AsyncClient.request() from inside an async function.
+        """
+
+        async def _do_request() -> httpx.Response:
+            return await self._async_client.request(method, url, **kwargs)
+
+        return anyio.run(_do_request)
 
     def get(self, url: str, **kwargs: Any) -> httpx.Response:
         return self.request("GET", url, **kwargs)
@@ -40,6 +53,7 @@ class SyncHttpxClient:
         return self.request("DELETE", url, **kwargs)
 
     def close(self) -> None:
+        """Close the underlying AsyncClient synchronously."""
         anyio.run(self._async_client.aclose)
 
 
