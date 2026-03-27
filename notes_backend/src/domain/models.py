@@ -17,6 +17,7 @@ class NoteBase(BaseModel):
     content: str = Field(..., min_length=1, description="Note body content (plain text).")
     tags: List[str] = Field(default_factory=list, description="Optional list of tag names.")
     pinned: bool = Field(default=False, description="Whether the note is pinned to the top of the list.")
+    starred: bool = Field(default=False, description="Whether the note is favorited/starred.")
 
 
 class NoteCreate(NoteBase):
@@ -28,6 +29,7 @@ class NoteUpdate(BaseModel):
     content: Optional[str] = Field(None, min_length=1, description="Updated note content.")
     tags: Optional[List[str]] = Field(None, description="Replace tags with this list; omit to keep unchanged.")
     pinned: Optional[bool] = Field(None, description="Set pinned state; omit to keep unchanged.")
+    starred: Optional[bool] = Field(None, description="Set starred state; omit to keep unchanged.")
 
 
 class NoteOut(BaseModel):
@@ -36,6 +38,7 @@ class NoteOut(BaseModel):
     content: str = Field(..., description="Note content.")
     tags: List[str] = Field(default_factory=list, description="Tag names.")
     pinned: bool = Field(default=False, description="Whether the note is pinned to the top of the list.")
+    starred: bool = Field(default=False, description="Whether the note is favorited/starred.")
     created_at: datetime = Field(..., description="Creation time (UTC).")
     updated_at: datetime = Field(..., description="Last update time (UTC).")
 

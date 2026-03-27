@@ -115,6 +115,7 @@ class NotesFlow:
             content=row["content"],
             tags=tags,
             pinned=bool(row["pinned"]) if "pinned" in row.keys() else False,
+            starred=bool(row["starred"]) if "starred" in row.keys() else False,
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
         )
@@ -137,10 +138,17 @@ class NotesFlow:
             cur = execute(
                 conn,
                 """
-                INSERT INTO notes(title, content, pinned, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO notes(title, content, pinned, starred, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (payload.title.strip(), payload.content, 1 if payload.pinned else 0, now, now),
+                (
+                    payload.title.strip(),
+                    payload.content,
+                    1 if payload.pinned else 0,
+                    1 if payload.starred else 0,
+                    now,
+                    now,
+                ),
             )
             note_id = int(cur.lastrowid)
             self._replace_note_tags(conn, note_id, norm_tags)
@@ -180,6 +188,8 @@ class NotesFlow:
                 fields.append(("content", payload.content))
             if payload.pinned is not None:
                 fields.append(("pinned", 1 if payload.pinned else 0))
+            if payload.starred is not None:
+                fields.append(("starred", 1 if payload.starred else 0))
 
             if fields:
                 set_sql = ", ".join([f"{k} = ?" for k, _ in fields] + ["updated_at = ?"])
@@ -211,6 +221,7 @@ class NotesFlow:
         q: Optional[str] = None,
         tag: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        starred: Optional[bool] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> NoteListOut:
@@ -262,6 +273,9 @@ class NotesFlow:
             params.extend(norm_tags)
             # AND semantics: note must match all selected tags.
             having = f"HAVING COUNT(DISTINCT t.name) = {len(norm_tags)}"
+
+        if starred is True:
+            where.append("n.starred = 1")
 
         if q:
             where.append("(lower(n.title) LIKE ? OR lower(n.content) LIKE ?)")

@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..core.config import get_config
 from ..adapters.sqlite_db import SqliteDb
+from ..adapters.schema import ensure_schema
 from ..domain.models import (
     NoteCreate,
     NoteListOut,
@@ -50,6 +51,10 @@ app = FastAPI(
 
 cfg = get_config()
 db = SqliteDb(path=cfg.sqlite_db_path)
+
+# Ensure tables/columns exist (including additive migrations).
+ensure_schema(db)
+
 flow = NotesFlow(db=db)
 tags_flow = TagsFlow(db=db)
 
@@ -83,12 +88,13 @@ def list_notes(
         default=None,
         description="Optional multi-tag filter (comma-separated). Notes must contain ALL tags (AND).",
     ),
+    starred: bool | None = Query(default=None, description="If true, return only starred/favorited notes."),
     limit: int = Query(default=50, ge=1, le=100, description="Max items to return (1-100)."),
     offset: int = Query(default=0, ge=0, description="Offset for pagination."),
 ):
-    """List notes with optional search/tag filter(s) and pagination."""
+    """List notes with optional search/tag filter(s), optional starred filter, and pagination."""
     tags_list = [t.strip() for t in (tags or "").split(",") if t.strip()] if tags else None
-    return flow.list_notes(q=q, tag=tag, tags=tags_list, limit=limit, offset=offset)
+    return flow.list_notes(q=q, tag=tag, tags=tags_list, starred=starred, limit=limit, offset=offset)
 
 
 @app.post(
