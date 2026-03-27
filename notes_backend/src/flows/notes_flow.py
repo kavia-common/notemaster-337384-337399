@@ -114,6 +114,7 @@ class NotesFlow:
             title=row["title"],
             content=row["content"],
             tags=tags,
+            pinned=bool(row["pinned"]) if "pinned" in row.keys() else False,
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
         )
@@ -136,10 +137,10 @@ class NotesFlow:
             cur = execute(
                 conn,
                 """
-                INSERT INTO notes(title, content, created_at, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO notes(title, content, pinned, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (payload.title.strip(), payload.content, now, now),
+                (payload.title.strip(), payload.content, 1 if payload.pinned else 0, now, now),
             )
             note_id = int(cur.lastrowid)
             self._replace_note_tags(conn, note_id, norm_tags)
@@ -177,6 +178,8 @@ class NotesFlow:
                 fields.append(("title", payload.title.strip()))
             if payload.content is not None:
                 fields.append(("content", payload.content))
+            if payload.pinned is not None:
+                fields.append(("pinned", 1 if payload.pinned else 0))
 
             if fields:
                 set_sql = ", ".join([f"{k} = ?" for k, _ in fields] + ["updated_at = ?"])
@@ -263,7 +266,7 @@ class NotesFlow:
                 FROM notes n
                 {join}
                 {where_sql}
-                ORDER BY n.updated_at DESC
+                ORDER BY n.pinned DESC, n.updated_at DESC
                 LIMIT ? OFFSET ?
                 """,
                 tuple(params + [limit, offset]),
